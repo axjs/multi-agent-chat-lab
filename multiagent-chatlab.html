@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<!--
+MIT License
+
+Copyright (c) 2024 Benjamin Tseng
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MultiAgent ChatLab</title>
+    <style>
+        label {
+            font-weight: bold;
+
+        }
+
+        /* Layout */
+        .app-container {
+            font-family: Arial, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .header {
+            text-align: center;
+            padding: 5px;
+            background-color: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+            font-size: 0.8em;
+            color: #666;
+        }
+
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            background-color: #f4f4f4;
+        }
+
+        /* Messages */
+        .message {
+            margin-bottom: 5px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .message-content {
+            padding: 5px;
+            border-radius: 5px;
+            color: #000;
+            font-size: 0.85em;
+        }
+
+        .message-header {
+            font-size: 0.7em;
+            margin-bottom: 3px;
+            color: #666;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* Controls */
+        .controls-bar {
+            display: flex;
+            padding: 12px 16px;
+            background-color: #f8f9fa;
+            border-top: 1px solid #dee2e6;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .agent-tabs {
+            display: flex;
+            gap: 12px;
+            flex: 1;
+        }
+
+        .control-form {
+            display: flex;
+            flex-direction: column;
+            padding: 10px;
+            background-color: #fff;
+            border-top: 1px solid #ccc;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        /* Buttons */
+        .btn {
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            padding: 10px 20px;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background-color: #007BFF;
+            color: white;
+        }
+
+        .btn-success {
+            background-color: #28a745;
+            color: white;
+        }
+
+        .btn-danger {
+            background-color: #dc3545;
+            color: white;
+        }
+
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+        }
+
+        .btn-tab-selected {
+            font-weight: 500;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .btn-tab-unselected {
+            background-color: #f8f9fa !important;
+            color: #aaa !important;
+            opacity: 0.8;
+        }
+
+        /* Inputs */
+        .input-field {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        /* Error message */
+        .error-toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background-color: #ff4444;
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+    </style>
+    <script src="https://unpkg.com/preact@latest/dist/preact.umd.js"></script>
+    <script src="https://unpkg.com/htm@latest/dist/htm.umd.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/showdown/2.1.0/showdown.min.js"></script>
+    <script>
+const html = htm.bind(preact.h);
+const { render, Component } = preact;
+
+// Constants and Configurations
+const defaultAgents = [
+    { name: "Agent 1", systemPrompt: "Your name is Agent 1. You are having a conversation with User and some other Agents. When you respond, simply provide your next response so that it can be easily machine-parsed.", model: "", apiKey: "", color: "#C1E1FF" },
+    { name: "Agent 2", systemPrompt: "Your name is Agent 2. You are having a conversation with User and some other Agents. When you respond, simply provide your next response so that it can be easily machine-parsed.", model: "", apiKey: "", color: "#D3D3D3" },
+    { name: "Agent 3", systemPrompt: "Your name is Agent 3. You are having a conversation with User and some other Agents. When you respond, simply provide your next response so that it can be easily machine-parsed.", model: "", apiKey: "", color: "#FFD1E1" },
+    { name: "Agent 4", systemPrompt: "Your name is Agent 4. You are having a conversation with User and some other Agents. When you respond, simply provide your next response so that it can be easily machine-parsed.", model: "", apiKey: "", color: "#E1D1FF" },
+    { name: "Agent 5", systemPrompt: "Your name is Agent 5. You are having a conversation with User and some other Agents. When you respond, simply provide your next response so that it can be easily machine-parsed.", model: "", apiKey: "", color: "#C2A89C" },
+    { name: "Agent 6", systemPrompt: "Your name is Agent 6. You are having a conversation with User and some other Agents. When you respond, simply provide your next response so that it can be easily machine-parsed.", model: "", apiKey: "", color: "#FAFAFA" },
+];
+
+class ChatApp extends Component {
+    constructor() {
+        super();
+        this.state = {
+            systemPrompt: '',
+            inputText: '',
+            agent: '',
+            messages: [],
+            isLoading: false,
+            apiKey: '',
+            errorMessage: null,
+            senderColors: { 'User': '#FFDDC1' },
+            editingMessageIndex: null,
+            editText: '',
+            showControls: true,
+            showModelConfig: true,
+            selectedModel: 'gemini-1.5-flash-8b-latest',
+            agents: defaultAgents,
+            selectedAgentIndex: 0,
+        };
+        this.converter = new showdown.Converter();
+
+        this.modelConfigs = {
+            'gpt-4o': { vendor: 'openai', displayName: 'OpenAI GPT-4o', modelId: 'gpt-4o' },
+            'gpt-4o-mini': { vendor: 'openai', displayName: 'OpenAI GPT-4o Mini', modelId: 'gpt-4o-mini' },
+            'o1': { vendor: 'openai', displayName: 'OpenAI O1', modelId: 'o1' },
+            'o1-mini': { vendor: 'openai', displayName: 'OpenAI O1 Mini', modelId: 'o1-mini' },
+            'claude-3-5-haiku-20241022': { vendor: 'anthropic', displayName: 'Anthropic Claude 3.5 Haiku', modelId: 'claude-3-5-haiku-20241022', maxTokens: 8192 },
+            'claude-3-5-sonnet-20241022': { vendor: 'anthropic', displayName: 'Anthropic Claude 3.5 Sonnet', modelId: 'claude-3-5-sonnet-20241022', maxTokens: 8192 },
+            'claude-3-haiku-20240307': { vendor: 'anthropic', displayName: 'Anthropic Claude 3 Haiku', modelId: 'claude-3-haiku-20240307', maxTokens: 4096 },
+            'gemini-1.5-pro-latest': { vendor: 'google', displayName: 'Google Gemini 1.5 Pro', modelId: 'gemini-1.5-pro-latest' },
+            'gemini-1.5-flash-latest': { vendor: 'google', displayName: 'Google Gemini 1.5 Flash', modelId: 'gemini-1.5-flash-latest' },
+            'gemini-1.5-flash-8b-latest': { vendor: 'google', displayName: 'Google Gemini 1.5 Flash-8B', modelId: 'gemini-1.5-flash-8b-latest' },
+            'gemini-2.0-flash-exp': { vendor: 'google', displayName: 'Google Gemini 2.0 Flash', modelId: 'gemini-2.0-flash-exp' }
+        };
+    }
+
+    componentDidMount() {
+        // Set initial agent name and system prompt based on selected model
+        this.updateAgentAndPrompt(this.state.selectedModel);
+    }
+
+    // API Related Methods
+    getEndpoint() {
+        const { selectedModel, apiKey } = this.state;
+        const config = this.modelConfigs[selectedModel];
+        
+        switch (config.vendor) {
+            case 'openai':
+                return 'https://api.openai.com/v1/chat/completions';
+            case 'anthropic':
+                return 'https://api.anthropic.com/v1/messages';
+            case 'google':
+                return `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`;
+            default:
+                throw new Error(`Unknown vendor: ${config.vendor}`);
+        }
+    }
+
+    getHeaders(vendor, apiKey) {
+        const baseHeaders = {
+            'Content-Type': 'application/json'
+        };
+
+        switch (vendor) {
+            case 'openai':
+                return {
+                    ...baseHeaders,
+                    'Authorization': `Bearer ${apiKey}`
+                };
+            case 'anthropic':
+                return {
+                    ...baseHeaders,
+                    'x-api-key': apiKey,
+                    'anthropic-version': '2023-06-01',
+                    'anthropic-dangerous-direct-browser-access': 'true'
+                };
+            case 'google':
+                return {
+                    ...baseHeaders
+                };
+            default:
+                throw new Error(`Unknown vendor: ${vendor}`);
+        }
+    }
+
+    formatRequestBody(systemPrompt, messages) {
+        const { selectedModel } = this.state;
+        const config = this.modelConfigs[selectedModel];
+        
+        // Convert messages to API-specific format
+        const formattedMessages = messages.map(msg => {
+            const prefix = msg.sender === 'User' ? '[User]: ' : `[${msg.sender}]: `;
+            const content = `${prefix}${msg.text}`;
+            return {
+                role: msg.sender === this.state.agent ? 'assistant' : 'user',
+                content: content
+            };
+        });
+
+        switch (config.vendor) {
+            case 'openai':
+                return {
+                    model: config.modelId,
+                    messages: [
+                        {
+                            role: "system",
+                            content: systemPrompt
+                        },
+                        ...formattedMessages
+                    ]
+                };
+            case 'anthropic':
+                return {
+                    model: config.modelId,
+                    system: systemPrompt,
+                    max_tokens: config.maxTokens,
+                    messages: formattedMessages
+                };
+            case 'google':
+                return {
+                    system_instruction: {
+                        parts: { text: systemPrompt }
+                    },
+                    contents: formattedMessages.map(msg => ({
+                        role: msg.role,
+                        parts: [{ text: msg.content }]
+                    }))
+                };
+            default:
+                throw new Error(`Unknown vendor: ${config.vendor}`);
+        }
+    }
+
+    extractResponseText(data, vendor) {
+        let text = '';
+        switch (vendor) {
+            case 'openai':
+                text = data.choices?.[0]?.message?.content || 'No response received';
+                break;
+            case 'anthropic':
+                text = data.content?.[0]?.text || 'No response received';
+                break;
+            case 'google':
+                text = data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response received';
+                break;
+            default:
+                throw new Error(`Unknown vendor: ${vendor}`);
+        }
+
+        // Remove agent name prefix if present
+        const { agent } = this.state;
+        const prefixPattern = new RegExp(`^\\[${agent}\\]:\\s*`, 'i');
+        return text.replace(prefixPattern, '');
+    }
+
+    async handleSendToLLM(event) {
+        event.preventDefault();
+        const { systemPrompt, inputText, messages, agent, apiKey, selectedModel } = this.state;
+        const config = this.modelConfigs[selectedModel];
+
+        if (!apiKey || apiKey.length < 30) {
+            alert("You need to enter a valid API key");
+            return;
+        }
+
+        let newMessages = [...messages];
+
+        // Only add user message if inputText is not empty
+        if (inputText.trim()) {
+            const userMessage = {
+                sender: 'User',
+                text: inputText,
+                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                model: 'User Input'
+            };
+            newMessages = [...messages, userMessage];
+        }
+
+        // Add loading message
+        const loadingMessage = {
+            sender: agent,
+            text: "Loading...",
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            model: this.modelConfigs[selectedModel].displayName
+        };
+
+        this.setState({
+            messages: [...newMessages, loadingMessage],
+            isLoading: true,
+            inputText: '' // Clear input after sending
+        });
+
+        const endpoint = this.getEndpoint();
+        const headers = this.getHeaders(config.vendor, apiKey);
+        const body = this.formatRequestBody(systemPrompt, newMessages);
+
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(body)
+            });
+
+            if (!response.ok) {
+                throw new Error(`API returned ${response.status}`);
+            }
+
+            const data = await response.json();
+            const responseText = this.extractResponseText(data, config.vendor);
+
+            // Update messages, replacing loading message with actual response
+            const updatedMessages = [...newMessages, {
+                sender: agent,
+                text: responseText,
+                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                model: this.modelConfigs[selectedModel].displayName
+            }];
+
+            this.setState({
+                messages: updatedMessages,
+                isLoading: false
+            });
+
+        } catch (error) {
+            console.error('API Error:', error);
+            this.showError(`${config.vendor.toUpperCase()} API error: ${error.message}`);
+            // Remove loading message on error
+            this.setState({
+                messages: newMessages,
+                isLoading: false
+            });
+        }
+    }
+
+    // Agent Management Methods
+    setSelectedAgent(index) {
+        const agent = this.state.agents[index];
+        this.setState({ 
+            selectedAgentIndex: index,
+            agent: agent.name,
+            systemPrompt: agent.systemPrompt,
+            apiKey: agent.apiKey,
+            selectedModel: agent.model || this.state.selectedModel,
+        });
+    }
+
+    updateSelectedAgent(updates) {
+        const { selectedAgentIndex, agents } = this.state;
+        const updatedAgents = agents.map((agent, index) => 
+            index === selectedAgentIndex ? { ...agent, ...updates } : agent
+        );
+        this.setState({ agents: updatedAgents });
+    }
+
+    updateAgentAndPrompt(modelId) {
+        const config = this.modelConfigs[modelId];
+        const agentName = `${config.vendor.charAt(0).toUpperCase() + config.vendor.slice(1)}`;
+        const systemPrompt = `Your name is ${agentName}. You are having a conversation with User and some other Agents. When you respond, simply provide your next response so that it can be easily machine-parsed.`;
+        
+        this.setState({
+            agent: agentName,
+            systemPrompt: systemPrompt
+        });
+    }
+
+    getColorForSender(sender) {
+        if (sender === 'User') return '#FFDDC1';
+        
+        // Find the agent with matching name and return their color
+        const agent = this.state.agents.find(a => a.name === sender);
+        return agent ? agent.color : '#e9ecef';
+    }
+
+    // UI Event Handlers
+    handleInputChange(event) {
+        this.setState({ inputText: event.target.value });
+    }
+
+    handleApiKeyChange(event) {
+        const apiKey = event.target.value;
+        this.setState({ apiKey });
+        this.updateSelectedAgent({ apiKey });
+    }
+
+    handleModelChange(event) {
+        const newModel = event.target.value;
+        this.setState({ selectedModel: newModel });
+        this.updateAgentAndPrompt(newModel);
+        this.updateSelectedAgent({ model: newModel });
+    }
+
+    handleAgentChange(event) {
+        const name = event.target.value;
+        this.setState({ agent: name });
+        this.updateSelectedAgent({ name });
+    }
+
+    handleSystemPromptChange(event) {
+        const systemPrompt = event.target.value;
+        this.setState({ systemPrompt });
+        this.updateSelectedAgent({ systemPrompt });
+    }
+
+    toggleControls() {
+        this.setState(prevState => ({
+            showControls: !prevState.showControls
+        }));
+    }
+
+    // Message Management Methods
+    handleEditMessage(index) {
+        const message = this.state.messages[index];
+        this.setState({ 
+            editingMessageIndex: index,
+            editText: message.text
+        });
+    }
+
+    handleSaveEdit(index) {
+        const updatedMessages = [...this.state.messages];
+        updatedMessages[index] = {
+            ...updatedMessages[index],
+            text: this.state.editText
+        };
+        this.setState({
+            messages: updatedMessages,
+            editingMessageIndex: null,
+            editText: ''
+        });
+    }
+
+    handleCancelEdit() {
+        this.setState({
+            editingMessageIndex: null,
+            editText: ''
+        });
+    }
+
+    handleDeleteMessage(index) {
+        if (window.confirm('Are you sure you want to delete this message? This action cannot be undone.')) {
+            const updatedMessages = this.state.messages.filter((_, i) => i !== index);
+            this.setState({ messages: updatedMessages });
+        }
+    }
+
+    handleEditTextChange(event) {
+        this.setState({ editText: event.target.value });
+    }
+
+    dismissError() {
+        this.setState({ errorMessage: null });
+    }
+
+    showError(message) {
+        this.setState({ 
+            errorMessage: message,
+            isLoading: false 
+        });
+    }
+
+    // Render Methods
+    renderMessage(message, index) {
+        const isEditing = this.state.editingMessageIndex === index;
+        const messageColor = this.getColorForSender(message.sender);
+        
+        return html`
+            <div className="message">
+                <div class="message-content" style="background-color: ${messageColor}">
+                    <div class="message-header">
+                        <span>${message.sender} • ${message.timestamp} • ${message.model}</span>
+                        ${!isEditing && html`
+                            <div>
+                                <button onClick=${() => this.handleEditMessage(index)} class="btn btn-primary">Edit</button>
+                                <button onClick=${() => this.handleDeleteMessage(index)} class="btn btn-danger">Delete</button>
+                            </div>
+                        `}
+                    </div>
+                    ${isEditing ? this.renderEditForm(index) : html`
+                        <div dangerouslySetInnerHTML=${{ __html: this.converter.makeHtml(message.text) }}></div>
+                    `}
+                </div>
+            </div>
+        `;
+    }
+
+    renderEditForm(index) {
+        return html`
+            <div style="display: flex; flex-direction: column; gap: 5px;">
+                <textarea
+                    value=${this.state.editText}
+                    onInput=${(e) => this.handleEditTextChange(e)}
+                    class="input-field"
+                    style="min-height: 100px; margin-bottom: 5px;"
+                ></textarea>
+                <div style="display: flex; gap: 5px; justify-content: flex-end;">
+                    <button onClick=${() => this.handleSaveEdit(index)} class="btn btn-success">Save</button>
+                    <button onClick=${() => this.handleCancelEdit()} class="btn btn-secondary">Cancel</button>
+                </div>
+            </div>
+        `;
+    }
+
+    renderAgentTabs() {
+        const { agents, selectedAgentIndex, isLoading, showControls } = this.state;
+        return html`
+            <div class="controls-bar">
+                <div class="agent-tabs">
+                    ${agents.map((agent, index) => html`
+                        <button
+                            key=${index}
+                            onClick=${() => this.setSelectedAgent(index)}
+                            class=${`btn ${selectedAgentIndex === index ? 'btn-tab-selected' : 'btn-tab-unselected'}`}
+                            style="background-color: ${selectedAgentIndex === index ? agent.color : '#f8f9fa'}"
+                        >
+                            ${agent.name}
+                        </button>
+                    `)}
+                </div>
+                <div style="display: flex; gap: 12px;">
+                    <button 
+                        onClick=${(e) => this.handleSendToLLM(e)} 
+                        class="btn btn-success"
+                        style="min-width: 100px"
+                        disabled=${isLoading}
+                    >
+                        Send
+                    </button>
+                    <button 
+                        onClick=${() => this.toggleControls()} 
+                        class="btn btn-secondary"
+                        style="min-width: 100px"
+                    >
+                        ${showControls ? 'Hide Controls' : 'Show Controls'}
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    render() {
+        const { systemPrompt, inputText, agent, messages, apiKey, errorMessage, showControls } = this.state;
+        return html`
+            <div class="app-container">
+                <div class="header">
+                    MultiAgent ChatLab by <a href="https://benjamintseng.com/" target="_blank" style="color: #007bff; text-decoration: none;">Benjamin Tseng</a>
+                </div>
+                <div class="messages-container">
+                    ${messages.map((message, index) => this.renderMessage(message, index))}
+                </div>
+                ${this.renderAgentTabs()}
+                <form class="control-form" style="display: ${showControls ? 'flex' : 'none'}">
+                    <div style="margin-bottom: 10px;">
+                        <div class="form-grid">
+                            <label>API Key:</label>
+                            <input
+                                type="password"
+                                class="input-field"
+                                placeholder="Enter your API key..."
+                                value=${apiKey}
+                                onInput=${(e) => this.handleApiKeyChange(e)}
+                            />
+                            <label>Model:</label>
+                            <select 
+                                value=${this.state.selectedModel}
+                                onChange=${(e) => this.handleModelChange(e)}
+                                class="input-field"
+                            >
+                                ${Object.entries(this.modelConfigs).map(([id, config]) => html`
+                                    <option value=${id}>${config.displayName}</option>
+                                `)}
+                            </select>
+                            <label>Agent Name:</label>
+                            <input
+                                type="text"
+                                class="input-field"
+                                placeholder="Enter agent name..."
+                                value=${agent}
+                                onInput=${(e) => this.handleAgentChange(e)}
+                            />
+                        </div>
+                        <label style="display: block; margin-bottom: 5px;">System Prompt:</label>
+                        <textarea
+                            class="input-field"
+                            style="width: 98.5%; margin-bottom: 10px; font-family: monospace;"
+                            rows="2"
+                            placeholder="Enter system instructions here..."
+                            value=${systemPrompt}
+                            onInput=${(e) => this.handleSystemPromptChange(e)}
+                        ></textarea>
+                        <label style="display: block; margin-bottom: 5px;">Message:</label>
+                        <textarea
+                            class="input-field"
+                            style="width: 98.5%;"
+                            rows="2"
+                            placeholder="Write your message... (leave blank if you just want LLM to respond)"
+                            value=${inputText}
+                            onInput=${(e) => this.handleInputChange(e)}
+                        ></textarea>
+                    </div>
+                </form>
+                ${errorMessage && html`
+                    <div class="error-toast">
+                        ${errorMessage}
+                        <button onClick=${() => this.dismissError()} class="btn">×</button>
+                    </div>
+                `}
+            </div>
+        `;
+    }
+}
+
+window.onload = () => {
+    render(html`<${ChatApp} />`, document.body);
+};
+    </script>
+</head>
+<body style="margin: 0;"></body>
+</html>
