@@ -28,6 +28,11 @@ SOFTWARE.
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MultiAgent ChatLab</title>
     <style>
+        /* Reset default margins for mobile */
+        body {
+            margin: 0;
+            padding: 0;
+        }
         label {
             font-weight: bold;
 
@@ -159,6 +164,8 @@ SOFTWARE.
             padding: 8px;
             border: 1px solid #ccc;
             border-radius: 4px;
+            width: 100%;
+            box-sizing: border-box;
         }
 
         /* Error message */
@@ -174,11 +181,89 @@ SOFTWARE.
             align-items: center;
             gap: 10px;
         }
+        /* Responsive design for mobile */
+        @media (max-width: 600px) {
+            .controls-bar {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 8px;
+            }
+            .controls-bar > * {
+                width: 100%;
+            }
+            .agent-tabs {
+                overflow-x: auto;
+                flex-wrap: nowrap;
+            }
+            .agent-tabs button {
+                flex: none;
+            }
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+            .form-grid label {
+                margin-bottom: 4px;
+            }
+            .messages-container {
+                padding: 5px;
+            }
+            .message-content {
+                font-size: 1em;
+            }
+        }
     </style>
     <script src="https://unpkg.com/preact@latest/dist/preact.umd.js"></script>
     <script src="https://unpkg.com/htm@latest/dist/htm.umd.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/showdown/2.1.0/showdown.min.js"></script>
     <script>
+// IndexedDB helper functions
+const DB_NAME = 'chatlab-db';
+const DB_VERSION = 1;
+const STORE_NAME = 'settings';
+
+function openDatabase() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                db.createObjectStore(STORE_NAME);
+            }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = (event) => reject(event.target.error);
+    });
+}
+// Delete a stored setting or chat data
+function deleteSetting(key) {
+    return openDatabase().then(db => new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.delete(key);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+    }));
+}
+
+function getSetting(key) {
+    return openDatabase().then(db => new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.get(key);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    }));
+}
+
+function saveSetting(key, value) {
+    return openDatabase().then(db => new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.put(value, key);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+    }));
+}
 const html = htm.bind(preact.h);
 const { render, Component } = preact;
 
@@ -211,6 +296,10 @@ class ChatApp extends Component {
             selectedModel: 'gemini-1.5-flash-8b-latest',
             agents: defaultAgents,
             selectedAgentIndex: 0,
+            // Chat session management
+            chatList: [],
+            currentChatId: '',
+            chatName: '',
         };
         this.converter = new showdown.Converter();
 
@@ -225,13 +314,203 @@ class ChatApp extends Component {
             'gemini-1.5-pro-latest': { vendor: 'google', displayName: 'Google Gemini 1.5 Pro', modelId: 'gemini-1.5-pro-latest' },
             'gemini-1.5-flash-latest': { vendor: 'google', displayName: 'Google Gemini 1.5 Flash', modelId: 'gemini-1.5-flash-latest' },
             'gemini-1.5-flash-8b-latest': { vendor: 'google', displayName: 'Google Gemini 1.5 Flash-8B', modelId: 'gemini-1.5-flash-8b-latest' },
-            'gemini-2.0-flash-exp': { vendor: 'google', displayName: 'Google Gemini 2.0 Flash', modelId: 'gemini-2.0-flash-exp' }
+            'gemini-2.0-flash-exp': { vendor: 'google', displayName: 'Google Gemini 2.0 Flash', modelId: 'gemini-2.0-flash-exp' },
+            'gemini-2.5-pro-exp-03-25': { vendor: 'google', displayName: 'Gemini 2.5 Pro Experimental 03-25', modelId: 'gemini-2.5-pro-exp-03-25' },
         };
     }
 
-    componentDidMount() {
-        // Set initial agent name and system prompt based on selected model
+    async componentDidMount() {
+        // Initialize agent/systemPrompt based on selectedModel
         this.updateAgentAndPrompt(this.state.selectedModel);
+        // Load global settings (agents, selected agent, model)
+        try {
+            const savedSettings = await getSetting('settings');
+            if (savedSettings) {
+                const { agents, selectedAgentIndex, selectedModel } = savedSettings;
+                const selectedAgent = agents[selectedAgentIndex] || agents[0];
+                this.setState({
+                    agents,
+                    selectedAgentIndex,
+                    selectedModel,
+                    agent: selectedAgent.name,
+                    systemPrompt: selectedAgent.systemPrompt,
+                    apiKey: selectedAgent.apiKey
+                });
+            }
+        } catch (err) {
+            console.error('Error loading settings:', err);
+        }
+        // Load chat sessions from IndexedDB
+        let chatList;
+        try {
+            chatList = await getSetting('chatList') || [];
+        } catch (err) {
+            console.error('Error loading chatList from IndexedDB:', err);
+            chatList = [];
+        }
+        if (!Array.isArray(chatList) || chatList.length === 0) {
+            chatList = [{ id: this.generateId(), name: 'Chat 1' }];
+            try {
+                await saveSetting('chatList', chatList);
+            } catch (err) {
+                console.error('Error saving chatList:', err);
+            }
+        }
+        let currentChatId;
+        try {
+            currentChatId = await getSetting('currentChatId');
+        } catch (err) {
+            console.error('Error loading currentChatId from IndexedDB:', err);
+            currentChatId = null;
+        }
+        if (!currentChatId || !chatList.find(c => c.id === currentChatId)) {
+            currentChatId = chatList[0].id;
+            try {
+                await saveSetting('currentChatId', currentChatId);
+            } catch (err) {
+                console.error('Error saving currentChatId:', err);
+            }
+        }
+        this.setState({ chatList, currentChatId });
+        await this.loadChat(currentChatId);
+    }
+    
+    componentDidUpdate(prevProps, prevState) {
+        // Persist global settings when they change
+        if (
+            prevState.agents !== this.state.agents ||
+            prevState.selectedAgentIndex !== this.state.selectedAgentIndex ||
+            prevState.selectedModel !== this.state.selectedModel
+        ) {
+            const { agents, selectedAgentIndex, selectedModel } = this.state;
+            saveSetting('settings', { agents, selectedAgentIndex, selectedModel })
+                .catch(err => console.error('Error saving settings:', err));
+        }
+        // Persist chat list and current chat ID
+        if (prevState.chatList !== this.state.chatList) {
+            saveSetting('chatList', this.state.chatList).catch(err => console.error('Error saving chatList:', err));
+        }
+        if (prevState.currentChatId !== this.state.currentChatId) {
+            saveSetting('currentChatId', this.state.currentChatId).catch(err => console.error('Error saving currentChatId:', err));
+        }
+        // Persist only messages for current chat
+        if (prevState.messages !== this.state.messages) {
+            this.saveCurrentChat();
+            this.scrollToBottom();
+        }
+    }
+
+    // Chat session management methods
+    generateId() {
+        return '_' + Math.random().toString(36).substr(2, 9);
+    }
+
+    async loadChat(chatId) {
+        const chatListItem = this.state.chatList.find(c => c.id === chatId);
+        let stored = null;
+        try {
+            stored = await getSetting('chat_' + chatId);
+        } catch (err) {
+            console.error(`Error loading chat_${chatId} from IndexedDB:`, err);
+        }
+        const messages = stored && Array.isArray(stored.messages) ? stored.messages : [];
+        this.setState({
+            messages,
+            currentChatId: chatId,
+            chatName: chatListItem ? chatListItem.name : ''
+        });
+    }
+
+    async saveCurrentChat() {
+        const { currentChatId, messages } = this.state;
+        const chatData = { messages };
+        try {
+            await saveSetting('chat_' + currentChatId, chatData);
+        } catch (err) {
+            console.error(`Error saving chat_${currentChatId}:`, err);
+        }
+    }
+    
+    // Scroll messages container to bottom to show latest message
+    scrollToBottom() {
+        const container = document.querySelector('.messages-container');
+        if (container) {
+            container.scrollTop = container.scrollHeight;
+        }
+    }
+
+    handleNewChat() {
+        const newId = this.generateId();
+        const newName = 'Chat ' + (this.state.chatList.length + 1);
+        const newChat = { id: newId, name: newName };
+        const newChatList = [...this.state.chatList, newChat];
+        this.setState({ chatList: newChatList, currentChatId: newId }, async () => {
+            try {
+                await saveSetting('chatList', this.state.chatList);
+            } catch (err) {
+                console.error('Error saving chatList:', err);
+            }
+            try {
+                await saveSetting('currentChatId', newId);
+            } catch (err) {
+                console.error('Error saving currentChatId:', err);
+            }
+            this.loadChat(newId);
+        });
+    }
+
+    handleDeleteChat() {
+        if (this.state.chatList.length <= 1) {
+            alert('Cannot delete the last chat.');
+            return;
+        }
+        if (!confirm('Are you sure you want to delete this chat?')) return;
+        const { currentChatId, chatList } = this.state;
+        const newChatList = chatList.filter(c => c.id !== currentChatId);
+        const newCurrent = newChatList[0].id;
+        deleteSetting('chat_' + currentChatId).catch(err => console.error(`Error deleting chat_${currentChatId}:`, err));
+        this.setState({ chatList: newChatList, currentChatId: newCurrent }, async () => {
+            try {
+                await saveSetting('chatList', this.state.chatList);
+            } catch (err) {
+                console.error('Error saving chatList:', err);
+            }
+            try {
+                await saveSetting('currentChatId', newCurrent);
+            } catch (err) {
+                console.error('Error saving currentChatId:', err);
+            }
+            this.loadChat(newCurrent);
+        });
+    }
+
+    handleChatSelect(event) {
+        const newId = event.target.value;
+        // save current chat before switching
+        this.saveCurrentChat();
+        saveSetting('currentChatId', newId).catch(err => console.error('Error saving currentChatId:', err));
+        this.loadChat(newId);
+    }
+
+    handleChatNameChange(event) {
+        const newName = event.target.value;
+        const { chatList, currentChatId } = this.state;
+        const updatedList = chatList.map(c => c.id === currentChatId ? { ...c, name: newName } : c);
+        this.setState({ chatList: updatedList, chatName: newName });
+    }
+
+    renderChatControls() {
+        const { chatList, currentChatId, chatName } = this.state;
+        return html`
+            <div style="padding: 5px; background-color: #e9ecef; border-bottom: 1px solid #ccc; display: flex; align-items: center; gap: 8px;">
+                <select value=${currentChatId} onChange=${e => this.handleChatSelect(e)} class="input-field" style="max-width: 150px;">
+                    ${chatList.map(c => html`<option key=${c.id} value=${c.id}>${c.name}</option>`)}
+                </select>
+                <input type="text" value=${chatName} onInput=${e => this.handleChatNameChange(e)} class="input-field" style="max-width: 150px;" />
+                <button onClick=${() => this.handleNewChat()} class="btn btn-primary">New Chat</button>
+                <button onClick=${() => this.handleDeleteChat()} class="btn btn-danger">Delete Chat</button>
+            </div>
+        `;
     }
 
     // API Related Methods
@@ -639,6 +918,7 @@ class ChatApp extends Component {
                 <div class="header">
                     MultiAgent ChatLab by <a href="https://benjamintseng.com/" target="_blank" style="color: #007bff; text-decoration: none;">Benjamin Tseng</a>
                 </div>
+                ${this.renderChatControls()}
                 <div class="messages-container">
                     ${messages.map((message, index) => this.renderMessage(message, index))}
                 </div>
